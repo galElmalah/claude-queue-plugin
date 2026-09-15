@@ -76,8 +76,6 @@ describe.skipIf(!ready)('claude-queue in Claude Code', () => {
 
   beforeAll(async () => {
     s = await startSession(FIXTURES, { pluginDir: PLUGIN, latency: 80, chunkSize: 6, columns: 120, rows: 45 })
-    s.send('/q on')
-    await s.waitFor('queue: holding on')
   }, 60_000)
 
   afterAll(async () => {
@@ -100,10 +98,10 @@ describe.skipIf(!ready)('claude-queue in Claude Code', () => {
   // its last word is on screen, which a `turn idle` read would race
   test('/q status stands alone and ends the plain /q', async () => {
     s.send('/q status')
-    await s.waitFor('holding on · turn idle · 0 held · waiting')
+    await s.waitFor('turn idle · 0 held · waiting')
     s.send('/q')
     const listed = stripAnsi(await s.waitFor('queue: nothing held'))
-    expect(listed).toContain('holding on · turn idle · 0 held · waiting')
+    expect(listed).toContain('turn idle · 0 held · waiting')
   }, TURN_MS)
 
   test('a prompt typed while nothing runs enters as it always did', async () => {
@@ -113,11 +111,12 @@ describe.skipIf(!ready)('claude-queue in Claude Code', () => {
     expect(screen).not.toMatch(BAND)
   }, TURN_MS)
 
-  test('a prompt typed mid-turn is held, shown in the band, and sent when the turn ends', async () => {
+  test('/q <text> mid-turn is held, shown in the band, and sent when the turn ends', async () => {
     s.send('queue longa token')
     await s.waitFor('ALPHA-RUNNING', TURN_MS)
-    s.send('queue beta token')
+    s.send('/q queue beta token')
     const band = stripAnsi(await s.waitFor('queued · 1 · sent when the turn ends', TURN_MS))
+    expect(band).toContain('queue: held · 1 waiting')
     expect(band).toContain('queue beta token')
     expect(band).toContain('[ edit ]')
     expect(band).toContain('[ ✕ ]')
@@ -126,17 +125,19 @@ describe.skipIf(!ready)('claude-queue in Claude Code', () => {
 
     await s.waitFor('ALPHA-DONE', TURN_MS)
     await s.waitFor('BETA-DONE', TURN_MS)
-    // its row sits after the first reply, a turn of its own
-    expect(rowOf('ALPHA-DONE')).toBeLessThan(rowOf('queue beta token'))
-    expect(rowOf('queue beta token')).toBeLessThan(rowOf('BETA-DONE'))
+    // its row sits after the first reply, a turn of its own (the `/q` command
+    // row above the reply carries the text too, so the prompt row is found below)
+    const after = rows().slice(rowOf('ALPHA-DONE'))
+    expect(after.findIndex(line => line.includes('queue beta token'))).toBeGreaterThan(0)
+    expect(after.findIndex(line => line.includes('queue beta token'))).toBeLessThan(after.findIndex(line => line.includes('BETA-DONE')))
     expect(plain()).not.toMatch(BAND)
   }, TURN_MS)
 
-  test('two prompts held over one turn go out in the order they were typed', async () => {
+  test('two prompts held over one turn go out in the order they were queued', async () => {
     s.send('queue longb token')
     await s.waitFor('BRAVO-RUNNING', TURN_MS)
-    s.send('queue first token')
-    s.send('queue second token')
+    s.send('/q queue first token')
+    s.send('/q queue second token')
     const band = stripAnsi(await s.waitFor('queued · 2 ·', TURN_MS))
     expect(band).toMatch(/1 queue first token/)
     expect(band).toMatch(/2 queue second token/)
@@ -146,20 +147,24 @@ describe.skipIf(!ready)('claude-queue in Claude Code', () => {
     expect(rowOf('FIRST-DONE')).toBeLessThan(rowOf('SECOND-DONE'))
   }, TURN_MS)
 
-  test('/q <text> holds the text as a typed line would be', async () => {
+  test('a line typed mid-turn without /q is the engine\'s to deliver, never the band\'s', async () => {
     s.send('queue longl token')
     await s.waitFor('LIMA-RUNNING', TURN_MS)
-    s.send('/q queue typed token')
-    const held = stripAnsi(await s.waitFor('queue: held · 1 waiting', TURN_MS))
-    expect(held).toMatch(/1 queue typed token/)
+    s.send('queue typed token')
+    await s.waitFor('LIMA-DONE', TURN_MS)
     await s.waitFor('TYPED-DONE', TURN_MS)
+    // from this turn on: earlier tests left the plugin's own rows above
+    const since = rows().slice(rowOf('LIMA-RUNNING')).join('\n')
+    expect(since).not.toMatch(BAND)
+    expect(since).not.toContain('plugin sent a message')
+    expect(since).toContain('❯ queue typed token')
   }, TURN_MS)
 
   test('/q rm takes an entry out mid-turn and it is never sent', async () => {
     s.send('queue longc token')
     await s.waitFor('CHARLIE-RUNNING', TURN_MS)
-    s.send('queue gone token')
-    s.send('queue kept token')
+    s.send('/q queue gone token')
+    s.send('/q queue kept token')
     await s.waitFor('queued · 2 ·', TURN_MS)
     s.send('/q rm 1')
     const after = stripAnsi(await s.waitFor('queue: 1 removed · 1 left', TURN_MS))
@@ -173,7 +178,7 @@ describe.skipIf(!ready)('claude-queue in Claude Code', () => {
   test('/q edit takes an entry out of the stack and back into the composer', async () => {
     s.send('queue longe token')
     await s.waitFor('ECHO-RUNNING', TURN_MS)
-    s.send('queue editme token')
+    s.send('/q queue editme token')
     await s.waitFor('queued · 1 ·', TURN_MS)
     s.send('/q edit 1')
     const after = stripAnsi(await s.waitFor('queue: 1 is in the prompt box', TURN_MS))
@@ -190,7 +195,7 @@ describe.skipIf(!ready)('claude-queue in Claude Code', () => {
   test('an Esc through the turn does not keep the stack: it drains on its own', async () => {
     s.send('queue longf token')
     await s.waitFor('FOX-RUNNING', TURN_MS)
-    s.send('queue escaped token')
+    s.send('/q queue escaped token')
     await s.waitFor('queued · 1 ·', TURN_MS)
     s.keys('Escape')
     // nobody says send: the interrupted turn's end is an end like any other
@@ -201,13 +206,13 @@ describe.skipIf(!ready)('claude-queue in Claude Code', () => {
   test('/q up, /q down and /q mv reorder the stack, and /q status reads the turn', async () => {
     s.send('queue longh token')
     await s.waitFor('HOTEL-RUNNING', TURN_MS)
-    s.send('queue ra token')
-    s.send('queue rb token')
-    s.send('queue rc token')
+    s.send('/q queue ra token')
+    s.send('/q queue rb token')
+    s.send('/q queue rc token')
     await s.waitFor('queued · 3 ·', TURN_MS)
 
     s.send('/q status')
-    await s.waitFor('holding on · turn running · 3 held · waiting', TURN_MS)
+    await s.waitFor('turn running · 3 held · waiting', TURN_MS)
 
     s.send('/q down 1')
     let band = stripAnsi(await s.waitFor('queue: 1 is now 2', TURN_MS))
@@ -235,8 +240,8 @@ describe.skipIf(!ready)('claude-queue in Claude Code', () => {
   test('/q now on a turn that calls no tool sends that entry first when it ends', async () => {
     s.send('queue longi token')
     await s.waitFor('INDIA-RUNNING', TURN_MS)
-    s.send('queue na token')
-    s.send('queue nb token')
+    s.send('/q queue na token')
+    s.send('/q queue nb token')
     await s.waitFor('queued · 2 ·', TURN_MS)
 
     s.send('/q now 2')
@@ -252,7 +257,7 @@ describe.skipIf(!ready)('claude-queue in Claude Code', () => {
   test('/q now mid-turn pushes the message into the turn at its next tool call', async () => {
     s.send('queue toolrun token')
     await s.waitFor('TANGO-RUNNING', TURN_MS)
-    s.send('queue steerme token')
+    s.send('/q queue steerme token')
     await s.waitFor('queued · 1 ·', TURN_MS)
 
     s.send('/q now 1')
@@ -267,13 +272,13 @@ describe.skipIf(!ready)('claude-queue in Claude Code', () => {
     const answered = stripAnsi(await s.waitFor(/STEERED-(SEEN|MISSED)/, TURN_MS))
     expect(answered).toContain('STEERED-SEEN')
     // and the only place the text shows is that line: it was never a prompt of the plugin's
-    expect(answered.split('\n').filter(line => line.includes('queue steerme token') && !line.includes('into the turn'))).toEqual([])
+    expect(answered.split('\n').filter(line => line.includes('queue steerme token') && !line.includes('into the turn') && !line.includes('/q queue steerme'))).toEqual([])
   }, TURN_MS)
 
   test('[ edit ] turns the row into a field the entry is typed in', async () => {
     s.send('queue longj token')
     await s.waitFor('JULIET-RUNNING', TURN_MS)
-    s.send('queue plain token')
+    s.send('/q queue plain token')
     await s.waitFor('queued · 1 ·', TURN_MS)
 
     // the band takes the keyboard, then the ring walks its row: [ ▶ ], [ edit ]
@@ -294,16 +299,6 @@ describe.skipIf(!ready)('claude-queue in Claude Code', () => {
     expect(sent).toContain('queue plain token EDITED')
   }, TURN_MS)
 
-  test('/q off puts Enter back the way it was, /q on holds again', async () => {
-    s.send('/q off')
-    await s.waitFor('queue: holding off')
-    s.send('/q')
-    // the turn word is whatever the last test left behind: the flag is the point
-    await s.waitFor(/holding off · turn (idle|running) · 0 held · waiting/)
-    s.send('/q on')
-    await s.waitFor('queue: holding on')
-  }, TURN_MS)
-
   test('the band the hook drew validated every time', () => {
     const log = readFileSync(s.debugLog, 'utf8')
     expect(log).not.toContain('does not validate')
@@ -318,8 +313,6 @@ describe.skipIf(!ready)('claude-queue under the mouse', () => {
 
   beforeAll(async () => {
     s = await startSession(FIXTURES, { pluginDir: PLUGIN, latency: 80, chunkSize: 6, columns: 120, rows: 45, fullscreen: true })
-    s.send('/q on')
-    await s.waitFor('queue: holding on')
   }, 60_000)
 
   afterAll(async () => {
@@ -333,8 +326,8 @@ describe.skipIf(!ready)('claude-queue under the mouse', () => {
   test('clicking [ ✕ ] removes an entry', async () => {
     s.send('queue longd token')
     await s.waitFor('DELTA-RUNNING', TURN_MS)
-    s.send('queue clicked token')
-    s.send('queue stays token')
+    s.send('/q queue clicked token')
+    s.send('/q queue stays token')
     await s.waitFor('queued · 2 ·', TURN_MS)
 
     const row = rowOf('1 queue clicked token')
@@ -354,8 +347,8 @@ describe.skipIf(!ready)('claude-queue under the mouse', () => {
   test('clicking [ ↓ ] moves an entry down, and it goes out second', async () => {
     s.send('queue longk token')
     await s.waitFor('KILO-RUNNING', TURN_MS)
-    s.send('queue ca token')
-    s.send('queue cb token')
+    s.send('/q queue ca token')
+    s.send('/q queue cb token')
     await s.waitFor('queued · 2 ·', TURN_MS)
 
     const row = rowOf('1 queue ca token')
@@ -392,8 +385,6 @@ describe.skipIf(!ready)('claude-queue with joined on', () => {
       ],
       { pluginDir: PLUGIN, latency: 80, chunkSize: 6, columns: 120, rows: 45, settings },
     )
-    s.send('/q on')
-    await s.waitFor('queue: holding on')
   }, 60_000)
 
   afterAll(async () => {
@@ -404,8 +395,8 @@ describe.skipIf(!ready)('claude-queue with joined on', () => {
   test('two held prompts leave as one message', async () => {
     s.send('queue longg token')
     await s.waitFor('GOLF-RUNNING', TURN_MS)
-    s.send('queue join-one token')
-    s.send('queue join-two token')
+    s.send('/q queue join-one token')
+    s.send('/q queue join-two token')
     await s.waitFor('queued · 2 ·', TURN_MS)
 
     const screen = stripAnsi(await s.waitFor('JOINED-DONE', TURN_MS))

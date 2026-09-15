@@ -1,10 +1,11 @@
 # claude-queue
 
-A prompt typed while Claude is working does not land in the running turn any
-more. It waits in a stack drawn above the prompt box and goes out once the
-turn has ended, one after the other, in the order you typed them — or the
+`/q <text>` while Claude is working: the text does not land in the running
+turn. It waits in a stack drawn above the prompt box and goes out once the
+turn has ended, one after the other, in the order you queued them — or the
 order you put them in, the stack being a thing you can reorder, edit and
-prune while the turn runs.
+prune while the turn runs. Enter alone is untouched: a line typed without
+`/q` goes into the turn the way it always did.
 
 ```
 ⏺ Reading hooks/register.ts …
@@ -20,8 +21,8 @@ prune while the turn runs.
 
 Stock Claude Code delivers a mid-turn message *into* the turn, beside the
 next tool result, so the model reads it halfway through work it has not
-finished. Here it is held instead: the turn ends on the thing it was asked,
-and your next thought starts a turn of its own.
+finished. A `/q` line is held instead: the turn ends on the thing it was
+asked, and your next thought starts a turn of its own.
 
 `[ ▶ ]` (and `/q now <n>`) is the way back in for the one that will not wait:
 the entry leaves the stack and rides the running turn's next tool result as
@@ -65,15 +66,15 @@ variable below and the API can change between releases.
    claude plugin install claude-queue@claude-queue-plugin
    ```
 
-3. Ask Claude for something slow, then type your next message and press
-   Enter. It appears in the band instead of in the turn.
+3. Ask Claude for something slow, then type `/q` and your next message and
+   press Enter. It appears in the band instead of in the turn.
 
 ## Use
 
 | command | what it does |
 | --- | --- |
 | `/q` | lists what is held, and ends with the status line |
-| `/q <text>` | holds `text` as if it had been typed mid-turn; sent at once when nothing runs |
+| `/q <text>` | holds `text` until the turn ends; sent at once when nothing runs |
 | `/q up <n>` \| `down <n>` | moves entry `n` one place |
 | `/q mv <n> <m>` | moves entry `n` to position `m` |
 | `/q now <n>` | pushes it into the running turn at its next tool call, or sends it at once when nothing is running |
@@ -81,8 +82,7 @@ variable below and the API can change between releases.
 | `/q edit <n>` | takes it out and puts its text back in the prompt box |
 | `/q clear` | drops the lot |
 | `/q send` | sends now, when the session is idle |
-| `/q status` | `holding on · turn idle · 2 held · waiting` |
-| `/q off` \| `on` | stop or resume holding; kept across sessions |
+| `/q status` | `turn idle · 2 held · waiting` |
 
 `/q` runs while a turn is in flight, which is the only time the stack fills.
 The band does the same things under the mouse, where Claude Code tracks it:
@@ -104,12 +104,7 @@ several, it edits the first and keeps the rest.
 
 Everything held goes out when the turn ends, an Esc-interrupted turn included —
 `[ send ]` and `/q send` are there for the rare stack that is still sitting
-there. The notice under the prompt on each held Enter reads
-`Prompt dropped by a hook: queued · n waiting · sent when the turn ends`; the
-prefix is the engine's, the rest is the plugin's.
-
-A slash command typed mid-turn is never held — it is you working on the turn,
-not queueing behind it.
+there.
 
 ## Options
 
@@ -125,12 +120,10 @@ with `/plugin configure claude-queue`, or in settings.json:
 
 `hooks/register.ts` is the whole plugin.
 
-- `prompt.submit` sees the Enter before the prompt enters the session. When
-  `e.turnId` is set a turn was running; the text is pushed on the stack and
-  the hook answers `{ drop }` without `next`, so nothing enters. `drop` is
-  what puts our own sentence on screen — answering `{ text }` without `next`
-  holds the prompt just as well but shows the engine's fixed *"a hook
-  answered without passing the prompt on"*, which reads as a fault.
+- `command.run` on `/q` is the way in: `immediate`, so it runs while a turn
+  is in flight, and anything after `/q` that is not a subcommand is pushed
+  on the stack. `prompt.submit` is left alone but for reading the turn id
+  off it, for a module reloaded mid-turn.
 - `turn.start` and `turn.complete` track the running turn. Every ending of the
   main loop's turn drains — `aborted` too — the first entry (or, under
   `joined`, the lot) going out with `$.prompt.submit`, which runs once the
@@ -161,8 +154,7 @@ with `/plugin configure claude-queue`, or in settings.json:
   `deny` (the band is not holding the keyboard) falls back to `$.prompt.fill`.
   Esc raises nothing at all, which is why the open field carries its own
   `[ ✕ ]`.
-- `$.store` keeps only the on/off flag. The stack is a session's own, and a
-  hot reload of the module empties it.
+- The stack is a session's own, and a hot reload of the module empties it.
 
 ## Limits
 
@@ -186,11 +178,8 @@ with `/plugin configure claude-queue`, or in settings.json:
 - **An Esc does not hold the stack back.** The turn it interrupted has ended,
   so what was typed behind it goes out. Take it out with `[ ✕ ]` or
   `/q clear` if the interrupt changed your mind about it too.
-- **A prompt carrying an image or another attachment is never held** and goes
-  into the running turn as it always did. An attachment reaches a hook as its
-  kind alone (`PromptAttachment` is `{ type, mediaType?, filename? }`, never
-  the bytes), so a held one could not be submitted whole; passing it through
-  loses nothing instead of losing the image.
+- **Text only.** `/q` takes a line of text; an image goes in the turn as it
+  always did.
 - Terminal only: the band is a terminal surface, and mid-turn typing is a
   thing only an interactive session does.
 
@@ -211,11 +200,11 @@ writes the git-ignored `.claude/types/`.
 `tests/e2e` drives a real interactive Claude Code in a tmux pane, its replies
 scripted by [aimock](https://github.com/CopilotKit/aimock) and paced so a turn
 takes about fifteen seconds, which is the room the tests type into. It covers
-an idle prompt passing through, one and two prompts held over a turn and the
-order they come back in, `/q rm`, `/q edit`, `/q up`, `/q down`, `/q mv`,
+an idle prompt passing through, a plain line typed mid-turn left to the engine,
+one and two `/q` lines held over a turn and the order they come back in, `/q rm`, `/q edit`, `/q up`, `/q down`, `/q mv`,
 `/q now` on a text-only turn and on one that calls a tool (a fixture that
 answers only when the pushed text is in the request), `/q status`, the field
-a row's `[ edit ]` opens, clicks on `[ ✕ ]` and `[ ↓ ]`, a turn ended with Esc draining anyway, `/q off`, and `joined`.
+a row's `[ edit ]` opens, clicks on `[ ✕ ]` and `[ ↓ ]`, a turn ended with Esc draining anyway, and `joined`.
 Needs `tmux` and `claude` on PATH, and the checkout to be a folder Claude Code
 trusts; skipped otherwise. About four minutes.
 

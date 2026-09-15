@@ -1,13 +1,12 @@
-import type { EngineInterface, PromptSubmitResult, Register, RenderElement, RenderInput } from 'claude-code'
+import type { EngineInterface, Register, RenderElement, RenderInput } from 'claude-code'
 
-// A prompt typed while a turn is running does not join the turn: it is held
-// in a stack drawn above the prompt box and sent once the turn has ended, in
-// order, one turn each. The band's buttons and /q reorder, edit, remove, flush.
-// `[ ▶ ]` is the way back in: the entry rides the turn's next tool result as
-// context, which is how the engine delivers a mid-turn message.
+// `/q <text>` while a turn is running holds the text in a stack drawn above
+// the prompt box, sent once the turn has ended, in order, one turn each. The
+// band's buttons and /q reorder, edit, remove, flush. `[ ▶ ]` is the way into
+// the running turn: the entry rides its next tool result as context, which is
+// how the engine delivers a mid-turn message. Enter alone is left as stock.
 
 const COMMAND = 'q'
-const HOLDING_KEY = 'holding'
 /** `[ ↑ ] [ ↓ ] [ ▶ ] [ edit ] [ ✕ ]`, each with the gap before it, and the one before the text */
 const CONTROLS = 34
 /** what a steered row says while it waits, and `[ ✕ ]` after it, gaps and all */
@@ -32,8 +31,6 @@ type Entry = { id: string; text: string }
 let stack: Entry[] = []
 /** taken out of the stack by `[ ▶ ]` to ride the running turn's next tool result */
 let steer: Entry[] = []
-/** off: Enter delivers into the turn as stock; read from the store on first use */
-let holding: boolean | undefined
 /** the plugin's `joined` option: the whole stack as one prompt */
 let joined = false
 /** the running main-loop turn, so the band and /q send know idle from busy */
@@ -51,15 +48,6 @@ let editing: { id: string; text: string } | null = null
 let editFocused = false
 /** the band's instance, for `$.ui.focus`; the band draws under one id */
 let bandRequest: string | undefined
-
-// lazily, not at session.start alone: a hot reload re-runs register without it
-const isHolding = async ($: EngineInterface) => {
-  if (holding === undefined) {
-    const saved = await $.store.get(HOLDING_KEY).catch(() => undefined)
-    holding = typeof saved === 'boolean' ? saved : true
-  }
-  return holding
-}
 
 const firstLine = (text: string) => text.trim().split('\n')[0]?.trim() ?? ''
 
@@ -86,7 +74,7 @@ const state = (): [word: string, moving: boolean] =>
 
 /** one line for a "it did not send" report: every flag the drain reads */
 const statusLine = () =>
-  `holding ${holding === false ? 'off' : 'on'} · turn ${turnId ? 'running' : 'idle'} · ${stack.length} held${steer.length > 0 ? ` · ${steer.length} going into the turn` : ''} · ${pending && !turnId ? 'going out' : 'waiting'}`
+  `turn ${turnId ? 'running' : 'idle'} · ${stack.length} held${steer.length > 0 ? ` · ${steer.length} going into the turn` : ''} · ${pending && !turnId ? 'going out' : 'waiting'}`
 
 const indexOfId = (id: string) => stack.findIndex(entry => entry.id === id)
 
@@ -365,12 +353,11 @@ export const register: Register = (on, options) => {
 
   on('session.start', async ($, e, next) => {
     const r = await next(e)
-    await isHolding($)
     await $.command
       .register({
         name: COMMAND,
-        description: 'Prompts typed mid-turn wait here: list, up/down/mv, now, rm, edit, clear, send, status, off|on (claude-queue)',
-        argumentHint: '[up <n> | down <n> | mv <n> <m> | now <n> | rm <n> | edit <n> | clear | send | status | off | on]',
+        description: 'Hold a prompt until the turn ends: /q <text>; list, up/down/mv, now, rm, edit, clear, send, status (claude-queue)',
+        argumentHint: '[<text> | up <n> | down <n> | mv <n> <m> | now <n> | rm <n> | edit <n> | clear | send | status]',
         // the queue is worked on while a turn runs, which is the only time it fills
         immediate: true,
       })
@@ -425,23 +412,11 @@ export const register: Register = (on, options) => {
     return context.length === (r.context?.length ?? 0) ? r : { ...r, context }
   })
 
-  on('prompt.submit', async ($, e, next): Promise<PromptSubmitResult> => {
-    if (!e.turnId || !(await isHolding($))) return next(e)
-    // a reload mid-turn missed turn.start: the Enter carries the id it lost
-    turnId = e.turnId
-    if (e.origin.kind !== 'composer' && e.origin.kind !== 'bridge') return next(e)
-    const text = e.text.trim()
-    // a slash command typed mid-turn is the user working on the turn, not queueing
-    if (text === '' || text.startsWith('/')) return next(e)
-    // an attachment crosses the hook as its kind alone, never its bytes, so a
-    // held image could not be sent whole: such a prompt goes in as it always did
-    if (e.attachments?.length) return next(e)
-    stack.push({ id: `e${++counter}`, text: e.text })
-    $.ui.invalidate('ui.render')
-    // `drop` puts our own sentence on screen; answering `{ text }` without
-    // next() holds the prompt just the same but shows the engine's fixed
-    // "a hook answered without passing the prompt on", which reads as a fault
-    return { drop: `queued · ${stack.length} waiting · sent when the turn ends` }
+  // Enter is left to the engine. Only the turn id is read off it: a reload
+  // mid-turn missed turn.start, and this Enter carries the id it lost.
+  on('prompt.submit', async ($, e, next) => {
+    if (e.turnId) turnId = e.turnId
+    return next(e)
   })
 
   // Esc, or the ring moving on, leaves the row as it was: the field is only
@@ -462,11 +437,6 @@ export const register: Register = (on, options) => {
     const [word = '', value = '', target = ''] = e.args.trim().split(/\s+/)
     if (word === '') return { text: listed() }
     if (word === 'status') return { text: statusLine() }
-    if (word === 'off' || word === 'on') {
-      holding = word === 'on'
-      await $.store.set(HOLDING_KEY, holding).catch(err => $.ui.log(`queue: store write failed: ${err}`))
-      return { text: `queue: holding ${word}${holding ? '' : ' · Enter delivers into the running turn again'}` }
-    }
     if (word === 'clear') {
       const n = stack.length + steer.length
       stack = []
@@ -509,8 +479,8 @@ export const register: Register = (on, options) => {
       send($)
       return { text: `queue: sending ${joined ? `all ${stack.length}` : `the first of ${stack.length}`}` }
     }
-    if (word === 'help') return { text: 'queue: /q <text> · up <n> · down <n> · mv <n> <m> · now <n> · rm <n> · edit <n> · clear · send · status · off|on' }
-    // anything else is a prompt to hold: `/q whats up` is the typed line, queued
+    if (word === 'help') return { text: 'queue: /q <text> · up <n> · down <n> · mv <n> <m> · now <n> · rm <n> · edit <n> · clear · send · status' }
+    // anything else is the prompt to hold
     stack.push({ id: `e${++counter}`, text: e.args.trim() })
     $.ui.invalidate('ui.render')
     if (turnId) return { text: `queue: held · ${stack.length} waiting · sent when the turn ends` }
