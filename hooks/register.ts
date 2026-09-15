@@ -16,6 +16,7 @@ const STEER_CONTROLS = MARK.length + 8
 const BORDER = 2
 /** the band's one colour, spent on the steer route alone: `▶` and a stack in flight */
 const ACCENT = 'cyan'
+const NO_MOUSE = 'clicks need /tui fullscreen · here: ctrl+x tab, Tab to a button, Enter'
 /** the engine refuses a plugin's prompt within 5s of its last: wait that out */
 const GAP_MS = 5200
 /** the engine caps a tool result's context: a push past it waits for the turn's end instead */
@@ -48,6 +49,8 @@ let editing: { id: string; text: string } | null = null
 let editFocused = false
 /** the band's instance, for `$.ui.focus`; the band draws under one id */
 let bandRequest: string | undefined
+/** read off /q: the classic renderer sends the band no mouse, so the band says how else */
+let fullscreen: boolean | undefined
 
 const firstLine = (text: string) => text.trim().split('\n')[0]?.trim() ?? ''
 
@@ -331,6 +334,8 @@ const bandOf = ($: EngineInterface, e: RenderInput<'AbovePrompt'> & { surface: '
           Button({ key: 'clear', label: 'clear', ...quiet, onPress: press(() => void ((stack = []), (steer = []), (editing = null))) }),
         ],
       }),
+      // a click that lands nowhere reads as a button that did nothing
+      ...(fullscreen === false ? [Box({ paddingLeft: gutter, children: Text({ dimColor: true, children: NO_MOUSE }) })] : []),
     ],
   })
 }
@@ -434,6 +439,7 @@ export const register: Register = (on, options) => {
   })
 
   on('command.run', { command: COMMAND }, async ($, e) => {
+    fullscreen = e.presentation.isFullscreen
     const [word = '', value = '', target = ''] = e.args.trim().split(/\s+/)
     if (word === '') return { text: listed() }
     if (word === 'status') return { text: statusLine() }

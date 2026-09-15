@@ -85,11 +85,18 @@ variable below and the API can change between releases.
 | `/q status` | `turn idle · 2 held · waiting` |
 
 `/q` runs while a turn is in flight, which is the only time the stack fills.
-The band does the same things under the mouse, where Claude Code tracks it:
+The band does the same things under the mouse:
 `[ ↑ ]` and `[ ↓ ]` reorder (the row at either end keeps the column and drops
 the button it cannot use), `[ ▶ ]` pushes that one into the turn, `[ edit ]`, `[ ✕ ]`,
 and `[ send ]` and `[ clear ]` under the stack. No hotkeys: a digit or a
 letter would fire while you were typing the next message.
+
+Only the fullscreen renderer sends the band the mouse: `/tui fullscreen`, or
+`CLAUDE_CODE_NO_FLICKER=1`. On the classic renderer (the default in most
+terminals) a click on a button lands nowhere, and the entry goes out when the
+turn ends as if nothing had been pressed; the band says so under its buttons.
+The keyboard reaches them on either renderer: **ctrl+x tab** moves the focus
+into the band, Tab walks the buttons, Enter presses one — or type `/q rm <n>`.
 
 `[ edit ]` turns the row into a text field, prefilled, with Enter to keep what
 you typed. The band has to hold the keyboard for that, and only **ctrl+x tab**
@@ -180,6 +187,9 @@ with `/plugin configure claude-queue`, or in settings.json:
   `/q clear` if the interrupt changed your mind about it too.
 - **Text only.** `/q` takes a line of text; an image goes in the turn as it
   always did.
+- **Clicks need the fullscreen renderer.** On the classic renderer the band
+  draws but never hears the mouse; use ctrl+x tab, `/q rm <n>`, or switch with
+  `/tui fullscreen`.
 - Terminal only: the band is a terminal surface, and mid-turn typing is a
   thing only an interactive session does.
 

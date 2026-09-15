@@ -120,6 +120,8 @@ describe.skipIf(!ready)('claude-queue in Claude Code', () => {
     expect(band).toContain('queue beta token')
     expect(band).toContain('[ edit ]')
     expect(band).toContain('[ ✕ ]')
+    // the classic renderer: a click would land nowhere, and the band says so
+    expect(band).toContain('clicks need /tui fullscreen')
     // the held prompt did not join the running turn
     expect(band).not.toContain('BETA-DONE')
 
@@ -329,6 +331,7 @@ describe.skipIf(!ready)('claude-queue under the mouse', () => {
     s.send('/q queue clicked token')
     s.send('/q queue stays token')
     await s.waitFor('queued · 2 ·', TURN_MS)
+    expect(plain()).not.toContain('clicks need /tui fullscreen')
 
     const row = rowOf('1 queue clicked token')
     const column = rows()[row]!.indexOf('✕')
