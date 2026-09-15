@@ -25,6 +25,8 @@ const FIXTURES: Fixture[] = [
   { prompt: 'queue first token', reply: 'First held. FIRST-DONE' },
   { prompt: 'queue second token', reply: 'Second held. SECOND-DONE' },
   { prompt: 'queue longc token', reply: long('CHARLIE') },
+  { prompt: 'queue longl token', reply: long('LIMA') },
+  { prompt: 'queue typed token', reply: 'Typed via /q. TYPED-DONE' },
   { prompt: 'queue gone token', reply: 'Should never be asked. GONE-DONE' },
   { prompt: 'queue kept token', reply: 'Kept answer. KEPT-DONE' },
   { prompt: 'queue longd token', reply: long('DELTA') },
@@ -142,6 +144,15 @@ describe.skipIf(!ready)('claude-queue in Claude Code', () => {
     await s.waitFor('SECOND-DONE', TURN_MS)
     expect(rowOf('BRAVO-DONE')).toBeLessThan(rowOf('FIRST-DONE'))
     expect(rowOf('FIRST-DONE')).toBeLessThan(rowOf('SECOND-DONE'))
+  }, TURN_MS)
+
+  test('/q <text> holds the text as a typed line would be', async () => {
+    s.send('queue longl token')
+    await s.waitFor('LIMA-RUNNING', TURN_MS)
+    s.send('/q queue typed token')
+    const held = stripAnsi(await s.waitFor('queue: held · 1 waiting', TURN_MS))
+    expect(held).toMatch(/1 queue typed token/)
+    await s.waitFor('TYPED-DONE', TURN_MS)
   }, TURN_MS)
 
   test('/q rm takes an entry out mid-turn and it is never sent', async () => {

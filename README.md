@@ -73,6 +73,7 @@ variable below and the API can change between releases.
 | command | what it does |
 | --- | --- |
 | `/q` | lists what is held, and ends with the status line |
+| `/q <text>` | holds `text` as if it had been typed mid-turn; sent at once when nothing runs |
 | `/q up <n>` \| `down <n>` | moves entry `n` one place |
 | `/q mv <n> <m>` | moves entry `n` to position `m` |
 | `/q now <n>` | pushes it into the running turn at its next tool call, or sends it at once when nothing is running |

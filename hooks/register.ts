@@ -509,7 +509,13 @@ export const register: Register = (on, options) => {
       send($)
       return { text: `queue: sending ${joined ? `all ${stack.length}` : `the first of ${stack.length}`}` }
     }
-    return { text: 'queue: /q · up <n> · down <n> · mv <n> <m> · now <n> · rm <n> · edit <n> · clear · send · status · off|on' }
+    if (word === 'help') return { text: 'queue: /q <text> · up <n> · down <n> · mv <n> <m> · now <n> · rm <n> · edit <n> · clear · send · status · off|on' }
+    // anything else is a prompt to hold: `/q whats up` is the typed line, queued
+    stack.push({ id: `e${++counter}`, text: e.args.trim() })
+    $.ui.invalidate('ui.render')
+    if (turnId) return { text: `queue: held · ${stack.length} waiting · sent when the turn ends` }
+    send($)
+    return { text: `queue: nothing is running · sending${stack.length > 1 ? ` · ${stack.length} waiting` : ''}` }
   })
 
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
