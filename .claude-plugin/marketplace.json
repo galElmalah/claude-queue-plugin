@@ -1,0 +1,14 @@
+{
+  "name": "claude-queue-plugin",
+  "owner": {
+    "name": "Gal Elmalah"
+  },
+  "description": "claude-queue, a mod for Claude Code: prompts typed while Claude is working wait in a stack above the prompt and go out when the turn ends.",
+  "plugins": [
+    {
+      "name": "claude-queue",
+      "source": "./",
+      "description": "Prompts typed while Claude is working wait in a stack above the prompt and go out when the turn ends; a button pushes one into the running turn."
+    }
+  ]
+}
